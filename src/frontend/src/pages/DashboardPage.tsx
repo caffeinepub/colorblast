@@ -8,6 +8,7 @@ import { AppHeader } from "../components/game/AppHeader";
 import { Footer } from "../components/game/Footer";
 import { useApp } from "../contexts/AppContext";
 import {
+  addPlayerToRoom,
   generateId,
   generateRoomCode,
   loadRoomByCode,
@@ -22,6 +23,7 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const { currentUser } = useApp();
   const [roomCode, setRoomCode] = useState("");
+  const [joinError, setJoinError] = useState("");
 
   if (!currentUser) {
     navigate({ to: "/" });
@@ -38,19 +40,40 @@ export function DashboardPage() {
   }
 
   function handleJoinRoom() {
+    setJoinError("");
     if (!roomCode.trim()) {
-      toast.error("Enter a room code");
+      setJoinError("Please enter a room code.");
+      return;
+    }
+    if (roomCode.trim().length !== 6) {
+      setJoinError("Room code must be exactly 6 characters.");
       return;
     }
     const room = loadRoomByCode(roomCode.trim());
     if (!room) {
-      toast.error("Room not found. Check the code and try again.");
+      setJoinError("Room not found. Please check the code.");
       return;
     }
     if (room.status !== "waiting") {
-      toast.error("This room is no longer accepting players.");
+      setJoinError("This room is no longer accepting players.");
       return;
     }
+    if (!currentUser) return;
+
+    // Try to add the player
+    const result = addPlayerToRoom(room.id, {
+      id: currentUser.id,
+      username: currentUser.username,
+      avatarColor: currentUser.avatarColor,
+      isHost: false,
+      isBot: false,
+    });
+
+    if (!result.success) {
+      setJoinError(result.error ?? "Failed to join room.");
+      return;
+    }
+
     navigate({ to: `/room/${room.id}` });
   }
 
@@ -85,6 +108,7 @@ export function DashboardPage() {
         ...bots,
       ],
       createdAt: Date.now(),
+      lastActiveAt: Date.now(),
       gameId: null,
     };
     saveRoom(room);
@@ -229,6 +253,7 @@ export function DashboardPage() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Button
+                  data-ocid="dashboard.create_room.button"
                   onClick={handleCreateRoom}
                   className="h-14 text-base font-bold rounded-xl"
                   style={{
@@ -242,6 +267,7 @@ export function DashboardPage() {
                   🏠 Create Room
                 </Button>
                 <Button
+                  data-ocid="dashboard.quick_match.button"
                   onClick={handleQuickMatch}
                   className="h-14 text-base font-bold rounded-xl"
                   style={{
@@ -255,37 +281,94 @@ export function DashboardPage() {
                   ⚡ Quick Match
                 </Button>
               </div>
-
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Enter room code (e.g. ABC123)"
-                  value={roomCode}
-                  onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-                  onKeyDown={(e) => e.key === "Enter" && handleJoinRoom()}
-                  maxLength={6}
-                  className="h-12 rounded-xl flex-1 font-mono tracking-wider"
-                  style={{
-                    background: "oklch(0.12 0.02 260)",
-                    border: "1px solid oklch(0.28 0.04 260)",
-                    color: "oklch(0.95 0.01 260)",
-                    fontSize: "1rem",
-                  }}
-                />
-                <Button
-                  onClick={handleJoinRoom}
-                  className="h-12 px-6 rounded-xl font-bold"
-                  style={{
-                    background: "oklch(0.75 0.25 340)",
-                    color: "#fff",
-                    fontFamily: "Bricolage Grotesque, sans-serif",
-                    border: "none",
-                  }}
-                >
-                  Join
-                </Button>
-              </div>
             </motion.div>
           </div>
+
+          {/* Join a Room — standalone prominent panel */}
+          <motion.div
+            variants={itemVariants}
+            className="rounded-2xl p-6"
+            style={{
+              background: "oklch(0.16 0.03 260)",
+              border: "2px solid oklch(0.75 0.25 340 / 0.3)",
+            }}
+          >
+            <h2
+              className="font-display font-black text-xl mb-1"
+              style={{ color: "oklch(0.95 0.01 260)" }}
+            >
+              📥 Join a Room
+            </h2>
+            <p
+              className="text-sm mb-5"
+              style={{ color: "oklch(0.55 0.02 260)" }}
+            >
+              Enter a 6-character room code to join a friend's game.
+            </p>
+
+            <label
+              htmlFor="join-room-code"
+              className="block text-xs font-semibold mb-2 uppercase tracking-widest"
+              style={{ color: "oklch(0.6 0.05 340)" }}
+            >
+              Enter 6-character room code
+            </label>
+            <div className="flex gap-2">
+              <Input
+                id="join-room-code"
+                data-ocid="dashboard.join_room.input"
+                placeholder="e.g. A7K9P2"
+                value={roomCode}
+                onChange={(e) => {
+                  setRoomCode(e.target.value.toUpperCase());
+                  if (joinError) setJoinError("");
+                }}
+                onKeyDown={(e) => e.key === "Enter" && handleJoinRoom()}
+                maxLength={6}
+                className="h-13 rounded-xl flex-1 font-mono tracking-[0.25em] text-lg"
+                style={{
+                  background: "oklch(0.12 0.02 260)",
+                  border: joinError
+                    ? "1px solid oklch(0.65 0.25 22)"
+                    : "1px solid oklch(0.28 0.04 260)",
+                  color: "oklch(0.95 0.01 260)",
+                  fontSize: "1.1rem",
+                  height: "3.25rem",
+                }}
+              />
+              <Button
+                data-ocid="dashboard.join_room.button"
+                onClick={handleJoinRoom}
+                className="h-13 px-8 rounded-xl font-bold text-base"
+                style={{
+                  background: "oklch(0.75 0.25 340)",
+                  color: "#fff",
+                  fontFamily: "Bricolage Grotesque, sans-serif",
+                  border: "none",
+                  height: "3.25rem",
+                }}
+              >
+                Join Room
+              </Button>
+            </div>
+
+            {/* Inline error */}
+            {joinError && (
+              <motion.p
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                data-ocid="dashboard.join_room.error_state"
+                className="text-sm mt-3 flex items-center gap-2 rounded-lg px-3 py-2"
+                style={{
+                  color: "oklch(0.75 0.25 22)",
+                  background: "oklch(0.65 0.28 22 / 0.1)",
+                  border: "1px solid oklch(0.65 0.28 22 / 0.3)",
+                }}
+              >
+                ⚠️ {joinError}
+              </motion.p>
+            )}
+          </motion.div>
 
           {/* Recent Games + Leaderboard Link */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -1,4 +1,4 @@
-import type { GameState, Room, UserProfile } from "./types";
+import type { GameState, Room, RoomPlayer, UserProfile } from "./types";
 
 const KEYS = {
   USER: "colorblast_user",
@@ -105,6 +105,100 @@ export function generateRoomCode(): string {
     { length: 6 },
     () => chars[Math.floor(Math.random() * chars.length)],
   ).join("");
+}
+
+export function deleteRoom(roomId: string): void {
+  const rooms = loadRooms().filter((r) => r.id !== roomId);
+  localStorage.setItem(KEYS.ROOMS, JSON.stringify(rooms));
+}
+
+export function updateRoomLastActive(roomId: string): void {
+  const rooms = loadRooms();
+  const idx = rooms.findIndex((r) => r.id === roomId);
+  if (idx >= 0) {
+    rooms[idx] = { ...rooms[idx], lastActiveAt: Date.now() };
+    localStorage.setItem(KEYS.ROOMS, JSON.stringify(rooms));
+  }
+}
+
+export function addPlayerToRoom(
+  roomId: string,
+  player: RoomPlayer,
+): { success: boolean; error?: string } {
+  const rooms = loadRooms();
+  const idx = rooms.findIndex((r) => r.id === roomId);
+  if (idx < 0) {
+    return { success: false, error: "Room not found. Please check the code." };
+  }
+  const room = rooms[idx];
+  if (room.status !== "waiting") {
+    return {
+      success: false,
+      error: "This room is no longer accepting players.",
+    };
+  }
+  if (room.players.length >= room.maxPlayers) {
+    return { success: false, error: "Room is full. Please join another room." };
+  }
+  // Don't add duplicate
+  if (room.players.find((p) => p.id === player.id)) {
+    return { success: true };
+  }
+  rooms[idx] = {
+    ...room,
+    players: [...room.players, player],
+    lastActiveAt: Date.now(),
+  };
+  localStorage.setItem(KEYS.ROOMS, JSON.stringify(rooms));
+  return { success: true };
+}
+
+export function removePlayerFromRoom(roomId: string, playerId: string): void {
+  const rooms = loadRooms();
+  const idx = rooms.findIndex((r) => r.id === roomId);
+  if (idx < 0) return;
+  const room = rooms[idx];
+  const remaining = room.players.filter((p) => p.id !== playerId);
+
+  // Delete empty rooms
+  if (remaining.length === 0) {
+    deleteRoom(roomId);
+    return;
+  }
+
+  // Transfer host if the host left
+  let newHostId = room.hostId;
+  if (room.hostId === playerId) {
+    // First non-bot player becomes host, fallback to first player
+    const nextHost = remaining.find((p) => !p.isBot) ?? remaining[0];
+    newHostId = nextHost.id;
+  }
+
+  const updatedPlayers = remaining.map((p) => ({
+    ...p,
+    isHost: p.id === newHostId,
+  }));
+
+  rooms[idx] = {
+    ...room,
+    hostId: newHostId,
+    players: updatedPlayers,
+    lastActiveAt: Date.now(),
+  };
+  localStorage.setItem(KEYS.ROOMS, JSON.stringify(rooms));
+}
+
+export function cleanupInactiveRooms(): void {
+  const THIRTY_MINUTES = 30 * 60 * 1000;
+  const now = Date.now();
+  const rooms = loadRooms();
+  const active = rooms.filter((r) => {
+    const lastActive = r.lastActiveAt ?? r.createdAt;
+    return now - lastActive < THIRTY_MINUTES;
+  });
+  if (active.length !== rooms.length) {
+    localStorage.setItem(KEYS.ROOMS, JSON.stringify(active));
+  }
 }
 
 export function hashPassword(password: string): string {

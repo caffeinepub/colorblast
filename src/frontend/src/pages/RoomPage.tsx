@@ -1,15 +1,23 @@
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { Bot, Copy, Crown, Send, X } from "lucide-react";
+import { Bot, Check, Copy, Crown, Link, LogOut, Send, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AppHeader } from "../components/game/AppHeader";
 import { useApp } from "../contexts/AppContext";
 import { createInitialGameState } from "../game/engine";
-import { generateId, loadRoom, saveGameState, saveRoom } from "../game/storage";
+import {
+  generateId,
+  loadRoom,
+  removePlayerFromRoom,
+  saveGameState,
+  saveRoom,
+  updateRoomLastActive,
+} from "../game/storage";
 import type { ChatMessage, Room } from "../game/types";
 import type { Player } from "../game/types";
 
@@ -22,19 +30,24 @@ export function RoomPage() {
   const roomId = params.roomId;
   const { currentUser } = useApp();
   const [room, setRoom] = useState<Room | null>(null);
+  const [roomLoaded, setRoomLoaded] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "sys1",
       senderId: "system",
       senderName: "System",
-      content: "Welcome to the room! Host can start the game when ready.",
+      content:
+        "Welcome to the room! Share the room code to invite friends. Host can start the game when ready.",
       timestamp: Date.now(),
       type: "system",
     },
   ]);
   const [chatInput, setChatInput] = useState("");
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // Initial load + redirect if not authenticated
   useEffect(() => {
     if (!currentUser) {
       navigate({ to: "/" });
@@ -47,19 +60,85 @@ export function RoomPage() {
       return;
     }
     setRoom(r);
+    setRoomLoaded(true);
+    updateRoomLastActive(roomId);
   }, [roomId, currentUser, navigate]);
 
+  // Polling — simulates real-time updates every 2500ms
+  useEffect(() => {
+    if (!roomLoaded) return;
+    const interval = setInterval(() => {
+      const r = loadRoom(roomId);
+      if (!r) {
+        // Room was deleted (e.g. all players left)
+        toast.error("The room has been closed.");
+        navigate({ to: "/dashboard" });
+        return;
+      }
+      // If game started by host, redirect to the game
+      if (r.status === "playing" && r.gameId) {
+        navigate({ to: `/game/${r.gameId}` });
+        return;
+      }
+      setRoom((prev) => {
+        if (!prev) return r;
+        // Check if player count changed — add system message
+        if (r.players.length > prev.players.length) {
+          const newPlayers = r.players.filter(
+            (rp) => !prev.players.find((pp) => pp.id === rp.id),
+          );
+          for (const np of newPlayers) {
+            setMessages((msgs) => [
+              ...msgs,
+              {
+                id: generateId(),
+                senderId: "system",
+                senderName: "System",
+                content: `${np.username} joined the room!`,
+                timestamp: Date.now(),
+                type: "system",
+              },
+            ]);
+          }
+        } else if (r.players.length < prev.players.length) {
+          const leftPlayers = prev.players.filter(
+            (pp) => !r.players.find((rp) => rp.id === pp.id),
+          );
+          for (const lp of leftPlayers) {
+            setMessages((msgs) => [
+              ...msgs,
+              {
+                id: generateId(),
+                senderId: "system",
+                senderName: "System",
+                content: `${lp.username} left the room.`,
+                timestamp: Date.now(),
+                type: "system",
+              },
+            ]);
+          }
+        }
+        return r;
+      });
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [roomId, navigate, roomLoaded]);
+
+  // Scroll to bottom whenever messages change
+  // biome-ignore lint/correctness/useExhaustiveDependencies: messages is the trigger for this scroll
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  });
+  }, [messages]);
 
   if (!room || !currentUser) return null;
 
   const isHost = room.hostId === currentUser.id;
   const humanPlayers = room.players.filter((p) => !p.isBot);
   const botPlayers = room.players.filter((p) => p.isBot);
-  // How many bots will fill the room when game starts
-  const botsNeeded = Math.max(0, room.maxPlayers - room.players.length);
+  // Bots fill empty slots only when the game starts (not shown as bot placeholders in lobby)
+  const botsNeeded = 0;
+  const isFull = room.players.length >= room.maxPlayers;
+  const inviteLink = `${window.location.origin}/join/${room.code}`;
 
   function handleKick(playerId: string) {
     if (!room || !isHost) return;
@@ -74,7 +153,7 @@ export function RoomPage() {
 
   function handleChangeMax(delta: number) {
     if (!room || !isHost) return;
-    const minAllowed = room.players.length; // can't go below current player count
+    const minAllowed = room.players.length;
     const newMax = Math.max(
       Math.max(2, minAllowed),
       Math.min(6, room.maxPlayers + delta),
@@ -85,10 +164,19 @@ export function RoomPage() {
     setRoom(updated);
   }
 
+  function handleLeaveRoom() {
+    if (!currentUser || !room) return;
+    removePlayerFromRoom(room.id, currentUser.id);
+    toast.success("You left the room.");
+    navigate({ to: "/dashboard" });
+  }
+
   function handleStartGame() {
     if (!room || !currentUser) return;
-    if (room.players.length < 1) {
-      toast.error("Need at least 1 player");
+
+    const totalPlayers = room.players.length;
+    if (totalPlayers < 2) {
+      toast.error("Need at least 2 players to start.");
       return;
     }
 
@@ -134,6 +222,7 @@ export function RoomPage() {
       players: allRoomPlayers,
       status: "playing",
       gameId,
+      lastActiveAt: Date.now(),
     };
     saveRoom(updatedRoom);
 
@@ -203,7 +292,16 @@ export function RoomPage() {
   function copyRoomCode() {
     if (!room) return;
     navigator.clipboard.writeText(room.code);
+    setCodeCopied(true);
     toast.success("Room code copied!");
+    setTimeout(() => setCodeCopied(false), 2000);
+  }
+
+  function copyInviteLink() {
+    navigator.clipboard.writeText(inviteLink);
+    setLinkCopied(true);
+    toast.success("Invite link copied!");
+    setTimeout(() => setLinkCopied(false), 2000);
   }
 
   return (
@@ -230,55 +328,74 @@ export function RoomPage() {
                 border: "1px solid oklch(0.28 0.04 260)",
               }}
             >
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                 <div>
-                  <h1
-                    className="text-2xl font-display font-black"
-                    style={{ color: "oklch(0.95 0.01 260)" }}
-                  >
-                    Game Lobby
-                  </h1>
+                  <div className="flex items-center gap-3 mb-1">
+                    <h1
+                      className="text-2xl font-display font-black"
+                      style={{ color: "oklch(0.95 0.01 260)" }}
+                    >
+                      Game Lobby
+                    </h1>
+                    {isFull && (
+                      <Badge
+                        style={{
+                          background: "oklch(0.65 0.28 22 / 0.2)",
+                          color: "oklch(0.75 0.25 22)",
+                          border: "1px solid oklch(0.65 0.28 22 / 0.4)",
+                        }}
+                      >
+                        Room Full
+                      </Badge>
+                    )}
+                  </div>
                   <p
                     className="text-sm"
                     style={{ color: "oklch(0.5 0.02 260)" }}
                   >
-                    {room.privacy === "private" ? "🔒 Private" : "🌍 Public"} ·{" "}
-                    {room.players.length}/{room.maxPlayers} players
-                    {botsNeeded > 0 && (
-                      <span style={{ color: "oklch(0.6 0.1 260)" }}>
-                        {" "}
-                        · {botsNeeded} bot{botsNeeded !== 1 ? "s" : ""} joining
-                        on start
-                      </span>
-                    )}
-                  </p>
-                </div>
-
-                {room.privacy === "private" && (
-                  <button
-                    type="button"
-                    data-ocid="room.copy_code.button"
-                    onClick={copyRoomCode}
-                    className="flex items-center gap-2 rounded-xl px-4 py-2 transition-all hover:opacity-80"
-                    style={{
-                      background: "oklch(0.12 0.02 260)",
-                      border: "1px solid oklch(0.28 0.04 260)",
-                    }}
-                  >
+                    {room.privacy === "private" ? "🔒 Private" : "🌍 Public"} ·
+                    Code:{" "}
                     <span
-                      className="text-xl font-mono font-black tracking-widest"
+                      className="font-mono font-bold"
                       style={{ color: "oklch(0.82 0.18 195)" }}
                     >
                       {room.code}
                     </span>
-                    <Copy size={14} style={{ color: "oklch(0.5 0.02 260)" }} />
-                  </button>
-                )}
+                  </p>
+                </div>
+
+                {/* Player count badge */}
+                <div
+                  className="rounded-xl px-4 py-2 text-center"
+                  style={{
+                    background: "oklch(0.12 0.04 195)",
+                    border: "1px solid oklch(0.82 0.18 195 / 0.3)",
+                  }}
+                >
+                  <span
+                    className="text-2xl font-black font-display"
+                    style={{ color: "oklch(0.82 0.18 195)" }}
+                  >
+                    {room.players.length}
+                  </span>
+                  <span
+                    className="text-lg font-black font-display"
+                    style={{ color: "oklch(0.55 0.05 195)" }}
+                  >
+                    /{room.maxPlayers}
+                  </span>
+                  <p
+                    className="text-xs"
+                    style={{ color: "oklch(0.55 0.05 195)" }}
+                  >
+                    Players
+                  </p>
+                </div>
               </div>
 
               {/* Host controls */}
               {isHost && (
-                <div className="flex items-center gap-3 mb-4">
+                <div className="flex items-center gap-3 mb-2">
                   <span
                     className="text-xs font-semibold"
                     style={{ color: "oklch(0.55 0.02 260)" }}
@@ -321,6 +438,82 @@ export function RoomPage() {
               )}
             </motion.div>
 
+            {/* Invite / Room Code Panel */}
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.08 }}
+              className="rounded-2xl p-5"
+              data-ocid="room.invite_code.panel"
+              style={{
+                background: "oklch(0.14 0.04 260)",
+                border: "1px solid oklch(0.82 0.18 195 / 0.25)",
+              }}
+            >
+              <p
+                className="text-xs font-semibold uppercase tracking-widest mb-4"
+                style={{ color: "oklch(0.55 0.05 195)" }}
+              >
+                Invite Friends
+              </p>
+
+              <div className="flex flex-col sm:flex-row gap-3">
+                {/* Code copy */}
+                <div
+                  className="flex-1 flex items-center gap-3 rounded-xl px-4 py-3"
+                  style={{
+                    background: "oklch(0.1 0.03 260)",
+                    border: "1px solid oklch(0.28 0.04 260)",
+                  }}
+                >
+                  <span
+                    className="text-2xl font-mono font-black tracking-[0.2em] flex-1"
+                    style={{ color: "oklch(0.82 0.18 195)" }}
+                  >
+                    {room.code}
+                  </span>
+                  <button
+                    type="button"
+                    data-ocid="room.copy_code.button"
+                    onClick={copyRoomCode}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition-all hover:opacity-80 active:scale-95"
+                    style={{
+                      background: codeCopied
+                        ? "oklch(0.72 0.22 140)"
+                        : "oklch(0.82 0.18 195)",
+                      color: "oklch(0.1 0.02 195)",
+                    }}
+                  >
+                    {codeCopied ? <Check size={13} /> : <Copy size={13} />}
+                    {codeCopied ? "Copied!" : "Copy Code"}
+                  </button>
+                </div>
+
+                {/* Invite link copy */}
+                <button
+                  type="button"
+                  data-ocid="room.copy_invite.button"
+                  onClick={copyInviteLink}
+                  className="flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-all hover:opacity-80 active:scale-95"
+                  style={{
+                    background: linkCopied
+                      ? "oklch(0.72 0.22 140 / 0.2)"
+                      : "oklch(0.18 0.04 260)",
+                    border: linkCopied
+                      ? "1px solid oklch(0.72 0.22 140 / 0.5)"
+                      : "1px solid oklch(0.28 0.04 260)",
+                    color: linkCopied
+                      ? "oklch(0.72 0.22 140)"
+                      : "oklch(0.65 0.05 260)",
+                    minWidth: 140,
+                  }}
+                >
+                  {linkCopied ? <Check size={14} /> : <Link size={14} />}
+                  {linkCopied ? "Link Copied!" : "Copy Invite Link"}
+                </button>
+              </div>
+            </motion.div>
+
             {/* Player Slots */}
             <motion.div
               initial={{ opacity: 0, y: 10 }}
@@ -336,7 +529,7 @@ export function RoomPage() {
                 className="font-display font-black text-base mb-4"
                 style={{ color: "oklch(0.65 0.05 260)" }}
               >
-                PLAYERS ({room.players.length}/{room.maxPlayers})
+                PLAYERS IN ROOM ({room.players.length}/{room.maxPlayers})
               </h2>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -461,7 +654,7 @@ export function RoomPage() {
                       </div>
                     ))}
 
-                  {/* Empty slots if maxPlayers > players + botsNeeded (shouldn't happen but safety) */}
+                  {/* Empty waiting slots */}
                   {Array.from({
                     length: Math.max(
                       0,
@@ -487,7 +680,7 @@ export function RoomPage() {
                         className="text-sm"
                         style={{ color: "oklch(0.4 0.02 260)" }}
                       >
-                        Waiting...
+                        Waiting for player...
                       </span>
                     </div>
                   ))}
@@ -502,14 +695,14 @@ export function RoomPage() {
                 >
                   {humanPlayers.length} human player
                   {humanPlayers.length !== 1 ? "s" : ""}
-                  {botsNeeded > 0 &&
-                    ` · ${botsNeeded} AI bot${botsNeeded !== 1 ? "s" : ""} will fill empty slots`}
+                  {room.players.length < room.maxPlayers &&
+                    " · AI bots will fill any empty slots on game start"}
                 </p>
               )}
 
-              {/* Start Button */}
-              {isHost && (
-                <div className="mt-6">
+              {/* Action Buttons */}
+              <div className="mt-6 flex flex-col gap-3">
+                {isHost && (
                   <Button
                     data-ocid="room.start_game.button"
                     onClick={handleStartGame}
@@ -522,16 +715,35 @@ export function RoomPage() {
                       border: "none",
                     }}
                   >
-                    🚀 Start Game ({room.maxPlayers} Players)
+                    🚀 Start Game ({room.players.length}/{room.maxPlayers}{" "}
+                    Players)
                   </Button>
+                )}
+                {isHost && (
                   <p
-                    className="text-xs text-center mt-2"
+                    className="text-xs text-center"
                     style={{ color: "oklch(0.4 0.02 260)" }}
                   >
-                    Only you can start the game as host
+                    Only you (host) can start · Min 2 players required
                   </p>
-                </div>
-              )}
+                )}
+
+                {/* Leave Room — visible to all */}
+                <Button
+                  variant="outline"
+                  data-ocid="room.leave.button"
+                  onClick={handleLeaveRoom}
+                  className="w-full h-11 rounded-xl font-semibold flex items-center justify-center gap-2"
+                  style={{
+                    border: "1px solid oklch(0.65 0.28 22 / 0.4)",
+                    color: "oklch(0.65 0.28 22)",
+                    background: "transparent",
+                  }}
+                >
+                  <LogOut size={15} />
+                  Leave Room
+                </Button>
+              </div>
             </motion.div>
           </div>
 
@@ -544,7 +756,7 @@ export function RoomPage() {
             style={{
               background: "oklch(0.16 0.03 260)",
               border: "1px solid oklch(0.28 0.04 260)",
-              height: 520,
+              height: 580,
             }}
           >
             <div

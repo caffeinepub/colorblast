@@ -10,6 +10,7 @@ import { AppProvider } from "./contexts/AppContext";
 import { CreateRoomPage } from "./pages/CreateRoomPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { GamePage } from "./pages/GamePage";
+import { JoinRoomPage } from "./pages/JoinRoomPage";
 import { LandingPage } from "./pages/LandingPage";
 import { LeaderboardPage } from "./pages/LeaderboardPage";
 import { ProfilePage } from "./pages/ProfilePage";
@@ -50,6 +51,12 @@ const roomRoute = createRoute({
   component: RoomPage,
 });
 
+const joinRoomRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/join/$code",
+  component: JoinRoomPage,
+});
+
 const gameRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/game/$gameId",
@@ -75,6 +82,8 @@ const routeTree = rootRoute.addChildren([
   // is matched before the dynamic "/room/$roomId" segment
   createRoomRoute,
   roomRoute,
+  // joinRoomRoute MUST come before roomRoute (already separate path prefix)
+  joinRoomRoute,
   gameRoute,
   leaderboardRoute,
   profileRoute,

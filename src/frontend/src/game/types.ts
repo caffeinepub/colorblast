@@ -56,6 +56,7 @@ export interface Room {
   status: "waiting" | "playing" | "finished";
   players: RoomPlayer[];
   createdAt: number;
+  lastActiveAt: number;
   gameId: string | null;
 }
 

@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "@tanstack/react-router";
+import { Check, Copy, Link } from "lucide-react";
 import { motion } from "motion/react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -12,13 +13,31 @@ export function CreateRoomPage() {
   const navigate = useNavigate();
   const { currentUser } = useApp();
   const [maxPlayers, setMaxPlayers] = useState(4);
-  const [privacy, setPrivacy] = useState<"public" | "private">("public");
+  const [privacy, setPrivacy] = useState<"public" | "private">("private");
   const [roomCode] = useState(generateRoomCode());
   const [creating, setCreating] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   if (!currentUser) {
     navigate({ to: "/" });
     return null;
+  }
+
+  const inviteLink = `${window.location.origin}/join/${roomCode}`;
+
+  function copyCode() {
+    navigator.clipboard.writeText(roomCode);
+    setCodeCopied(true);
+    toast.success("Room code copied!");
+    setTimeout(() => setCodeCopied(false), 2000);
+  }
+
+  function copyInviteLink() {
+    navigator.clipboard.writeText(inviteLink);
+    setLinkCopied(true);
+    toast.success("Invite link copied!");
+    setTimeout(() => setLinkCopied(false), 2000);
   }
 
   async function handleCreate() {
@@ -44,6 +63,7 @@ export function CreateRoomPage() {
           },
         ],
         createdAt: Date.now(),
+        lastActiveAt: Date.now(),
         gameId: null,
       };
       saveRoom(room);
@@ -81,9 +101,88 @@ export function CreateRoomPage() {
             Create Room
           </h1>
           <p className="text-sm mb-8" style={{ color: "oklch(0.55 0.02 260)" }}>
-            Set up your game room. AI bots will fill empty slots when the game
-            starts.
+            Set up your game room. Share the code to invite friends!
           </p>
+
+          {/* Room Code — always visible */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.97 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.1 }}
+            className="mb-8 rounded-2xl p-5"
+            data-ocid="room.invite_code.panel"
+            style={{
+              background: "oklch(0.12 0.04 260)",
+              border: "2px solid oklch(0.82 0.18 195 / 0.35)",
+            }}
+          >
+            <p
+              className="text-xs font-semibold uppercase tracking-widest mb-3"
+              style={{ color: "oklch(0.55 0.05 195)" }}
+            >
+              Your Room Code
+            </p>
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <p
+                className="text-4xl font-mono font-black tracking-[0.3em]"
+                style={{ color: "oklch(0.82 0.18 195)" }}
+              >
+                {roomCode}
+              </p>
+              <button
+                type="button"
+                data-ocid="create_room.copy_code.button"
+                onClick={copyCode}
+                className="flex items-center gap-2 rounded-xl px-4 py-2 font-semibold text-sm transition-all hover:opacity-80 active:scale-95"
+                style={{
+                  background: codeCopied
+                    ? "oklch(0.72 0.22 140)"
+                    : "oklch(0.82 0.18 195)",
+                  color: "oklch(0.1 0.02 195)",
+                }}
+              >
+                {codeCopied ? <Check size={14} /> : <Copy size={14} />}
+                {codeCopied ? "Copied!" : "Copy"}
+              </button>
+            </div>
+
+            {/* Invite Link */}
+            <div
+              className="rounded-xl px-3 py-2 flex items-center gap-2"
+              style={{
+                background: "oklch(0.09 0.02 260)",
+                border: "1px solid oklch(0.22 0.03 260)",
+              }}
+            >
+              <Link
+                size={12}
+                style={{ color: "oklch(0.5 0.05 195)", flexShrink: 0 }}
+              />
+              <span
+                className="text-xs flex-1 truncate font-mono"
+                style={{ color: "oklch(0.55 0.04 195)" }}
+              >
+                {inviteLink}
+              </span>
+              <button
+                type="button"
+                data-ocid="create_room.copy_invite.button"
+                onClick={copyInviteLink}
+                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all hover:opacity-80 active:scale-95 flex-shrink-0"
+                style={{
+                  background: linkCopied
+                    ? "oklch(0.72 0.22 140)"
+                    : "oklch(0.22 0.04 260)",
+                  color: linkCopied
+                    ? "oklch(0.1 0.02 140)"
+                    : "oklch(0.75 0.05 260)",
+                }}
+              >
+                {linkCopied ? <Check size={10} /> : <Link size={10} />}
+                {linkCopied ? "Copied!" : "Copy Link"}
+              </button>
+            </div>
+          </motion.div>
 
           {/* Max Players */}
           <div className="mb-8">
@@ -125,8 +224,8 @@ export function CreateRoomPage() {
               className="text-xs mt-2"
               style={{ color: "oklch(0.45 0.02 260)" }}
             >
-              You + {maxPlayers - 1} AI bot{maxPlayers - 1 !== 1 ? "s" : ""}{" "}
-              (fill empty slots on start)
+              Room supports up to {maxPlayers} players · AI bots fill empty
+              slots on start
             </p>
           </div>
 
@@ -170,32 +269,6 @@ export function CreateRoomPage() {
             </div>
           </div>
 
-          {/* Room Code Preview */}
-          {privacy === "private" && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              className="mb-6 rounded-xl p-4"
-              style={{
-                background: "oklch(0.12 0.02 260)",
-                border: "1px solid oklch(0.25 0.03 260)",
-              }}
-            >
-              <p
-                className="text-xs mb-2"
-                style={{ color: "oklch(0.55 0.02 260)" }}
-              >
-                Share this code with friends:
-              </p>
-              <p
-                className="text-3xl font-mono font-black tracking-[0.3em]"
-                style={{ color: "oklch(0.82 0.18 195)" }}
-              >
-                {roomCode}
-              </p>
-            </motion.div>
-          )}
-
           {/* Summary */}
           <div
             className="mb-8 rounded-xl p-4 flex items-center gap-4"
@@ -218,8 +291,7 @@ export function CreateRoomPage() {
                 {currentUser.username} (Host)
               </p>
               <p className="text-xs" style={{ color: "oklch(0.5 0.02 260)" }}>
-                Room for {maxPlayers} players ·{" "}
-                {privacy === "private" ? `Code: ${roomCode}` : "Public"}
+                Room for up to {maxPlayers} players · Code: {roomCode}
               </p>
             </div>
           </div>
